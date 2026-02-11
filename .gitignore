@@ -59,6 +59,9 @@ datasets/
 dataset/
 model_tuning/dataset*/
 
+# Model files
+models/
+
 # OS
 .DS_Store
 Thumbs.db

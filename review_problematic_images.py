@@ -13,9 +13,12 @@ Usage:
 import json
 import argparse
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageTk
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import tkinter as tk
+from tkinter import messagebox
+import os
 
 
 def load_report(report_path):
@@ -171,74 +174,319 @@ def print_detailed_summary(report):
 
 def interactive_review(report, class_name=None):
     """
-    Interactive review mode - shows images and prompts for actions
+    Interactive review mode - shows images in a GUI with action buttons
     
     Args:
         report: The loaded report dictionary
         class_name: Optional class to focus on (None = all classes)
     """
-    problematic_by_class = report['problematic_images_by_class']
-    
-    if class_name:
-        if class_name not in problematic_by_class:
-            print(f"Class '{class_name}' not found in report.")
-            return
-        classes_to_review = {class_name: problematic_by_class[class_name]}
-    else:
-        classes_to_review = problematic_by_class
-    
-    for cls, images in classes_to_review.items():
-        print(f"\n{'=' * 80}")
-        print(f"Reviewing class: {cls.upper()} ({len(images)} images)")
-        print(f"{'=' * 80}\n")
-        
-        for idx, img_data in enumerate(images, 1):
-            print(f"\n--- Image {idx}/{len(images)} ---")
-            print(f"Path: {img_data['path']}")
-            print(f"Mean Loss: {img_data['mean_loss']:.4f}")
-            print(f"Max Loss: {img_data['max_loss']:.4f}")
-            print(f"Min Loss: {img_data['min_loss']:.4f}")
-            print(f"Std Loss: {img_data['std_loss']:.4f}")
-            print(f"Losses by Epoch: {[f'{l:.3f}' for l in img_data['losses_by_epoch']]}")
-            
-            try:
-                img = Image.open(img_data['path'])
-                img.show()
-            except Exception as e:
-                print(f"⚠️  Error displaying image: {e}")
-            
-            print("\nActions:")
-            print("  [n] Next image")
-            print("  [d] Mark for deletion")
-            print("  [r] Mark for relabeling")
-            print("  [k] Keep (no action)")
-            print("  [s] Skip remaining images in this class")
-            print("  [q] Quit review")
-            
-            action = input("\nYour choice: ").lower().strip()
-            
-            if action == 'q':
-                print("\n👋 Exiting review...")
-                return
-            elif action == 's':
-                print(f"\n⏭️  Skipping remaining images in {cls}")
-                break
-            elif action == 'd':
-                print(f"   ✓ Marked for deletion: {img_data['path']}")
-                # TODO: Add to deletion list
-            elif action == 'r':
-                print(f"   ✓ Marked for relabeling: {img_data['path']}")
-                # TODO: Add to relabeling list
-            elif action == 'k':
-                print(f"   ✓ Keeping: {img_data['path']}")
-            else:
-                print(f"   → Next image")
+    reviewer = ImageReviewerGUI(report, class_name)
+    reviewer.run()
     
     print("\n" + "=" * 80)
     print("Review Complete!")
     print("=" * 80)
     print("\n💡 Note: This is a preview mode. Actual deletion/relabeling")
     print("   functionality can be added based on your workflow preferences.")
+
+
+class ImageReviewerGUI:
+    """GUI for interactive image review"""
+    
+    def __init__(self, report, class_name=None):
+        self.report = report
+        self.problematic_by_class = report['problematic_images_by_class']
+        
+        # Filter by class if specified
+        if class_name:
+            if class_name not in self.problematic_by_class:
+                print(f"Class '{class_name}' not found in report.")
+                return
+            self.classes_to_review = {class_name: self.problematic_by_class[class_name]}
+        else:
+            self.classes_to_review = self.problematic_by_class
+        
+        # Flatten all images to review
+        self.all_images = []
+        for cls, images in self.classes_to_review.items():
+            for img_data in images:
+                self.all_images.append((cls, img_data))
+        
+        # State tracking
+        self.current_index = 0
+        self.deletion_list = []
+        self.relabel_list = []
+        self.kept_list = []
+        self.skip_current_class = False
+        
+        # Create main window
+        self.root = tk.Tk()
+        self.root.title("Image Reviewer - Problematic Images")
+        self.root.geometry("1000x800")
+        
+        # Configure grid
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=1)
+        
+        self.setup_ui()
+        self.load_image()
+        
+    def setup_ui(self):
+        """Setup the UI components"""
+        
+        # Top info panel
+        info_frame = tk.Frame(self.root, bg='#f0f0f0', pady=10)
+        info_frame.grid(row=0, column=0, sticky='ew', padx=10, pady=5)
+        
+        self.class_label = tk.Label(info_frame, text="", font=('Arial', 12, 'bold'), bg='#f0f0f0')
+        self.class_label.pack()
+        
+        self.progress_label = tk.Label(info_frame, text="", font=('Arial', 10), bg='#f0f0f0')
+        self.progress_label.pack()
+        
+        # Image display area
+        image_frame = tk.Frame(self.root, bg='white')
+        image_frame.grid(row=1, column=0, sticky='nsew', padx=10, pady=5)
+        
+        self.image_label = tk.Label(image_frame, bg='white')
+        self.image_label.pack(expand=True, fill='both')
+        
+        # Stats panel
+        stats_frame = tk.Frame(self.root, bg='#e8e8e8', pady=5)
+        stats_frame.grid(row=2, column=0, sticky='ew', padx=10, pady=5)
+        
+        self.stats_label = tk.Label(stats_frame, text="", font=('Arial', 9), 
+                                    bg='#e8e8e8', justify='left')
+        self.stats_label.pack(padx=10, pady=5)
+        
+        self.path_label = tk.Label(stats_frame, text="", font=('Arial', 8), 
+                                   bg='#e8e8e8', fg='#555', wraplength=900)
+        self.path_label.pack(padx=10, pady=2)
+        
+        # Action buttons panel
+        button_frame = tk.Frame(self.root, bg='#f0f0f0', pady=15)
+        button_frame.grid(row=3, column=0, sticky='ew', padx=10, pady=5)
+        
+        # Configure button frame grid
+        for i in range(5):
+            button_frame.columnconfigure(i, weight=1)
+        
+        # Create buttons with colors
+        tk.Button(button_frame, text="✓ Keep", command=self.action_keep,
+                 bg='#4CAF50', fg='white', font=('Arial', 11, 'bold'),
+                 width=12, height=2).grid(row=0, column=0, padx=5)
+        
+        tk.Button(button_frame, text="🗑 Delete", command=self.action_delete,
+                 bg='#f44336', fg='white', font=('Arial', 11, 'bold'),
+                 width=12, height=2).grid(row=0, column=1, padx=5)
+        
+        tk.Button(button_frame, text="🏷 Relabel", command=self.action_relabel,
+                 bg='#FF9800', fg='white', font=('Arial', 11, 'bold'),
+                 width=12, height=2).grid(row=0, column=2, padx=5)
+        
+        tk.Button(button_frame, text="⏭ Skip Class", command=self.action_skip_class,
+                 bg='#2196F3', fg='white', font=('Arial', 11, 'bold'),
+                 width=12, height=2).grid(row=0, column=3, padx=5)
+        
+        tk.Button(button_frame, text="❌ Quit", command=self.action_quit,
+                 bg='#9E9E9E', fg='white', font=('Arial', 11, 'bold'),
+                 width=12, height=2).grid(row=0, column=4, padx=5)
+        
+        # Summary label
+        self.summary_label = tk.Label(button_frame, text="", font=('Arial', 9), 
+                                      bg='#f0f0f0', fg='#333')
+        self.summary_label.grid(row=1, column=0, columnspan=5, pady=10)
+        
+        # Bind keyboard shortcuts
+        self.root.bind('k', lambda e: self.action_keep())
+        self.root.bind('d', lambda e: self.action_delete())
+        self.root.bind('r', lambda e: self.action_relabel())
+        self.root.bind('s', lambda e: self.action_skip_class())
+        self.root.bind('q', lambda e: self.action_quit())
+        self.root.bind('<Right>', lambda e: self.action_keep())
+        self.root.bind('<Delete>', lambda e: self.action_delete())
+    
+    def load_image(self):
+        """Load and display the current image"""
+        if self.current_index >= len(self.all_images):
+            self.finish_review()
+            return
+        
+        cls, img_data = self.all_images[self.current_index]
+        
+        # Check if we should skip this class
+        if self.skip_current_class:
+            # Find next image from different class
+            current_class = cls
+            while self.current_index < len(self.all_images):
+                cls, img_data = self.all_images[self.current_index]
+                if cls != current_class:
+                    self.skip_current_class = False
+                    break
+                self.current_index += 1
+            
+            if self.current_index >= len(self.all_images):
+                self.finish_review()
+                return
+        
+        # Update labels
+        self.class_label.config(text=f"Class: {cls.upper()}")
+        self.progress_label.config(
+            text=f"Image {self.current_index + 1} of {len(self.all_images)}"
+        )
+        
+        # Load and display image
+        try:
+            img = Image.open(img_data['path'])
+            
+            # Resize to fit window while maintaining aspect ratio
+            max_size = (900, 500)
+            img.thumbnail(max_size, Image.Resampling.LANCZOS)
+            
+            photo = ImageTk.PhotoImage(img)
+            self.image_label.config(image=photo)
+            self.image_label.image = photo  # Keep a reference
+            
+        except Exception as e:
+            self.image_label.config(text=f"Error loading image:\n{str(e)}", 
+                                   fg='red', font=('Arial', 12))
+        
+        # Update stats
+        stats_text = (
+            f"Mean Loss: {img_data['mean_loss']:.4f}  |  "
+            f"Max Loss: {img_data['max_loss']:.4f}  |  "
+            f"Min Loss: {img_data['min_loss']:.4f}  |  "
+            f"Std Loss: {img_data['std_loss']:.4f}\n"
+            f"Losses by Epoch: {', '.join([f'{l:.3f}' for l in img_data['losses_by_epoch']])}"
+        )
+        self.stats_label.config(text=stats_text)
+        self.path_label.config(text=f"Path: {img_data['path']}")
+        
+        # Update summary
+        summary = (
+            f"Marked for deletion: {len(self.deletion_list)}  |  "
+            f"Marked for relabeling: {len(self.relabel_list)}  |  "
+            f"Kept: {len(self.kept_list)}"
+        )
+        self.summary_label.config(text=summary)
+    
+    def next_image(self):
+        """Move to next image"""
+        self.current_index += 1
+        self.load_image()
+    
+    def action_keep(self):
+        """Mark current image as keep"""
+        if self.current_index < len(self.all_images):
+            cls, img_data = self.all_images[self.current_index]
+            self.kept_list.append((cls, img_data['path']))
+            print(f"✓ Kept: {img_data['path']}")
+            self.next_image()
+    
+    def action_delete(self):
+        """Mark current image for deletion"""
+        if self.current_index < len(self.all_images):
+            cls, img_data = self.all_images[self.current_index]
+            self.deletion_list.append((cls, img_data['path']))
+            print(f"🗑 Marked for deletion: {img_data['path']}")
+            self.next_image()
+    
+    def action_relabel(self):
+        """Mark current image for relabeling"""
+        if self.current_index < len(self.all_images):
+            cls, img_data = self.all_images[self.current_index]
+            self.relabel_list.append((cls, img_data['path']))
+            print(f"🏷 Marked for relabeling: {img_data['path']}")
+            self.next_image()
+    
+    def action_skip_class(self):
+        """Skip remaining images in current class"""
+        if self.current_index < len(self.all_images):
+            cls, img_data = self.all_images[self.current_index]
+            print(f"⏭ Skipping remaining images in class: {cls}")
+            self.skip_current_class = True
+            self.next_image()
+    
+    def action_quit(self):
+        """Quit the review"""
+        if messagebox.askyesno("Quit Review", 
+                              "Are you sure you want to quit?\nAny pending actions will still be processed."):
+            self.finish_review()
+    
+    def finish_review(self):
+        """Complete the review and handle deletions"""
+        print("\n" + "=" * 80)
+        print("REVIEW COMPLETE!")
+        print("=" * 80)
+        
+        # Show summary
+        print(f"\n📊 Summary:")
+        print(f"   Images reviewed: {self.current_index}")
+        print(f"   Kept: {len(self.kept_list)}")
+        print(f"   Marked for relabeling: {len(self.relabel_list)}")
+        print(f"   Marked for deletion: {len(self.deletion_list)}")
+        
+        # Handle relabeling list
+        if self.relabel_list:
+            print(f"\n🏷 Images marked for relabeling:")
+            for cls, path in self.relabel_list:
+                print(f"   - [{cls}] {path}")
+            print("\n   Note: Please manually relabel these images.")
+        
+        # Handle deletion list
+        if self.deletion_list:
+            print(f"\n🗑 Images marked for deletion:")
+            for cls, path in self.deletion_list:
+                print(f"   - [{cls}] {path}")
+            
+            # Show confirmation dialog
+            message = (
+                f"You have marked {len(self.deletion_list)} image(s) for deletion.\n\n"
+                f"Do you want to permanently delete these files?\n\n"
+                f"⚠️ This action cannot be undone!"
+            )
+            
+            if messagebox.askyesno("Confirm Deletion", message, icon='warning'):
+                self.perform_deletions()
+            else:
+                print("\n❌ Deletion cancelled. Files were NOT deleted.")
+                print("   Files that were marked for deletion:")
+                for cls, path in self.deletion_list:
+                    print(f"   - [{cls}] {path}")
+        
+        self.root.destroy()
+    
+    def perform_deletions(self):
+        """Actually delete the files in the deletion list"""
+        print("\n🗑 Deleting files...")
+        deleted_count = 0
+        failed_count = 0
+        
+        for cls, path in self.deletion_list:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    print(f"   ✓ Deleted: {path}")
+                    deleted_count += 1
+                else:
+                    print(f"   ⚠️  File not found: {path}")
+                    failed_count += 1
+            except Exception as e:
+                print(f"   ❌ Failed to delete {path}: {e}")
+                failed_count += 1
+        
+        print(f"\n✓ Deletion complete!")
+        print(f"   Successfully deleted: {deleted_count}")
+        if failed_count > 0:
+            print(f"   Failed: {failed_count}")
+        
+        messagebox.showinfo("Deletion Complete", 
+                          f"Successfully deleted {deleted_count} file(s).\n"
+                          f"Failed: {failed_count}")
+    
+    def run(self):
+        """Start the GUI"""
+        self.root.mainloop()
 
 
 def main():

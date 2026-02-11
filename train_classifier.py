@@ -175,7 +175,7 @@ def create_model(num_classes=4, freeze_until='layer3'):
 def get_class_weights(dataset):
     """Calculate inverse frequency weights for weighted sampling"""
     class_counts = defaultdict(int)
-    for _, label, _ in dataset.samples:
+    for _, label in dataset.samples:
         class_counts[label] += 1
     
     total_samples = len(dataset)
@@ -187,7 +187,7 @@ def get_class_weights(dataset):
         class_weights[class_idx] = total_samples / (num_classes * class_counts[class_idx])
     
     # Create sample weights for each sample
-    sample_weights = [class_weights[label] for _, label, _ in dataset.samples]
+    sample_weights = [class_weights[label] for _, label in dataset.samples]
     
     return sample_weights, class_counts
 
