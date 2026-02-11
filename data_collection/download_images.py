@@ -180,7 +180,7 @@ def download_category_images(category, queries, method='duckduckgo', api_key=Non
         print(f"   💾 Downloading {len(urls)} images for this query...")
         for img_idx, url in enumerate(urls, 1):
             # Format: class_query_number.jpg
-            filename = temp_dir / f"{category}_{query_sanitized}_{img_idx:03d}.jpg"
+            filename = temp_dir / f"{category}_{query_sanitized}_{img_idx:04d}.jpg"
             
             if downloader.download_image(url, filename):
                 downloaded_files_with_metadata.append({
@@ -261,19 +261,6 @@ def main():
     print("💡 Tip: For better results, get a free Bing API key")
     
     print(f"\n📁 Dataset directory: {base_dir}")
-    print("\n⚙️  Download Strategy:")
-    print("   1. Search ALL queries and collect URLs")
-    print("   2. Download ALL available images from all queries")
-    print("   3. Randomly sample best images for train/val splits")
-    print("\n📊 Expected Downloads:")
-    print("   Bird/Plane/Superman (each):")
-    print("     - Search: 100 images/query × 5 queries = ~500 images")
-    print("     - Final dataset: 100 train + 25 val = 125 images")
-    print("   Other:")
-    print("     - Search: 10 images/query × 50 queries = ~500 images")
-    print("     - Final dataset: 100 train + 25 val = 125 images")
-    print("\n   📥 Total images to download: ~2000")
-    print("   💾 Final dataset size: 500 images (125 per category)")
     
     response = input("\n▶️  Start downloading? (y/n): ")
     if response.lower() != 'y':
@@ -294,9 +281,9 @@ def main():
     for category, queries in search_queries.items():
         # Set images_per_query based on category
         if category == 'other':
-            images_per_query = 100  # 10 images per query for 'other'
+            images_per_query = 100  # 100 images per query for 'other'
         else:
-            images_per_query = 500  # 100 images per query for bird/plane/superman
+            images_per_query = 100  # 100 images per query for bird/plane/superman
         
         downloaded = download_category_images(
             category=category,

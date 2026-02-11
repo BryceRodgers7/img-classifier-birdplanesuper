@@ -26,6 +26,7 @@ from collections import defaultdict
 from datetime import datetime
 from PIL import Image
 import imagehash
+import time
 
 
 def get_image_info(file_path):
@@ -168,6 +169,8 @@ def analyze_duplicates(duplicate_groups):
     Returns:
         dict: Categorized duplicate groups
     """
+    print(f"   Analyzing {len(duplicate_groups)} duplicate groups...")
+    
     analysis = {
         'same_class_and_set': [],      # Exact duplicates (same class + same set)
         'same_class_diff_set': [],     # Same class but different set (train vs val)
@@ -176,7 +179,13 @@ def analyze_duplicates(duplicate_groups):
         'unknown': []                  # Files without clear class/set
     }
     
-    for group in duplicate_groups:
+    total_groups = len(duplicate_groups)
+    
+    for idx, group in enumerate(duplicate_groups, 1):
+        # Show progress every 100 groups or at the end
+        if idx % 100 == 0 or idx == total_groups:
+            print(f"   Progress: {idx}/{total_groups} groups analyzed ({100*idx/total_groups:.1f}%)")
+        
         files = group['files']
         
         # Group files by class and set
@@ -196,6 +205,8 @@ def analyze_duplicates(duplicate_groups):
             category = 'unknown'
         
         analysis[category].append(group)
+    
+    print(f"   ✅ Categorization complete!")
     
     return analysis
 
@@ -310,6 +321,9 @@ def print_summary(report):
 
 def main():
     """Main function."""
+    # Start overall timer
+    start_time = time.time()
+    
     print("=" * 70)
     print("🔍 Duplicate Image Detector (Perceptual Hash)")
     print("=" * 70)
@@ -342,25 +356,40 @@ def main():
     
     # Find duplicates
     print("\n🔍 Step 1: Computing perceptual hashes and finding duplicates...")
+    step1_start = time.time()
     duplicate_groups = find_duplicates(dataset_dir, hamming_threshold)
+    step1_time = time.time() - step1_start
+    print(f"   ⏱️  Step 1 completed in {step1_time:.1f} seconds")
     
     if not duplicate_groups:
-        print("\n✅ No duplicates found!")
+        elapsed = time.time() - start_time
+        print(f"\n✅ No duplicates found!")
+        print(f"⏱️  Total time: {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
         return
     
     # Analyze duplicates
     print("\n🔍 Step 2: Analyzing duplicate categories...")
+    step2_start = time.time()
     analysis = analyze_duplicates(duplicate_groups)
+    step2_time = time.time() - step2_start
+    print(f"   ⏱️  Step 2 completed in {step2_time:.1f} seconds")
     
     # Create report
     output_path = dataset_dir / 'duplicate_report_phash.json'
     print(f"\n💾 Step 3: Creating report at {output_path}...")
+    step3_start = time.time()
     report = create_report(duplicate_groups, analysis, output_path, hamming_threshold)
+    step3_time = time.time() - step3_start
+    print(f"   ⏱️  Step 3 completed in {step3_time:.1f} seconds")
     
     # Print summary
     print_summary(report)
     
+    # Calculate total elapsed time
+    elapsed = time.time() - start_time
+    
     print(f"\n💾 Full report saved to: {output_path}")
+    print(f"\n⏱️  Total Processing Time: {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
     print(f"\n🔧 Next step:")
     print(f"   python data_collection/remove_duplicates.py")
     print(f"   (Modify it to read 'duplicate_report_phash.json' instead)")

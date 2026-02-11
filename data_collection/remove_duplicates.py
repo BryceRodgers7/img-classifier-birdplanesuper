@@ -14,6 +14,7 @@ Requires:
 
 import os
 import json
+import shutil
 from pathlib import Path
 from datetime import datetime
 
@@ -84,15 +85,17 @@ class DuplicateRemover:
             keep_file = files[0]
             delete_files = files[1:]
             
-            print(f"\n  Group (size: {group['size_bytes']} bytes, {len(files)} files):")
+            # Get size if available (different report formats may vary)
+            size_info = f"size: {group['size_bytes']} bytes, " if 'size_bytes' in group else ""
+            print(f"\n  Group ({size_info}{len(files)} files):")
             print(f"    ✅ Keep: {keep_file['path']}")
             
             for file_info in delete_files:
                 print(f"    🗑️  Delete: {file_info['path']}")
+                deleted.append(file_info['path'])  # Track in both dry_run and actual deletion
                 if not dry_run:
                     try:
                         os.remove(file_info['path'])
-                        deleted.append(file_info['path'])
                     except Exception as e:
                         print(f"       ⚠️  Error deleting: {e}")
         
@@ -117,7 +120,9 @@ class DuplicateRemover:
             val_files = [f for f in files if f['set'] == 'val']
             other_files = [f for f in files if f['set'] not in ['train', 'val']]
             
-            print(f"  Group (size: {group['size_bytes']} bytes, {len(files)} files):")
+            # Get size if available
+            size_info = f"size: {group['size_bytes']} bytes, " if 'size_bytes' in group else ""
+            print(f"  Group ({size_info}{len(files)} files):")
             
             # Keep train files
             if train_files:
@@ -128,10 +133,10 @@ class DuplicateRemover:
             # Delete val files
             for file_info in val_files:
                 print(f"    🗑️  Delete (val): {file_info['path']}")
+                deleted.append(file_info['path'])  # Track in both dry_run and actual deletion
                 if not dry_run:
                     try:
                         os.remove(file_info['path'])
-                        deleted.append(file_info['path'])
                     except Exception as e:
                         print(f"       ⚠️  Error deleting: {e}")
             
@@ -160,7 +165,9 @@ class DuplicateRemover:
             val_files = [f for f in files if f['set'] == 'val']
             other_files = [f for f in files if f['set'] not in ['train', 'val']]
             
-            print(f"  Group (size: {group['size_bytes']} bytes, {len(files)} files):")
+            # Get size if available
+            size_info = f"size: {group['size_bytes']} bytes, " if 'size_bytes' in group else ""
+            print(f"  Group ({size_info}{len(files)} files):")
             
             # Keep val files
             if val_files:
@@ -171,10 +178,10 @@ class DuplicateRemover:
             # Delete train files
             for file_info in train_files:
                 print(f"    🗑️  Delete (train): {file_info['path']}")
+                deleted.append(file_info['path'])  # Track in both dry_run and actual deletion
                 if not dry_run:
                     try:
                         os.remove(file_info['path'])
-                        deleted.append(file_info['path'])
                     except Exception as e:
                         print(f"       ⚠️  Error deleting: {e}")
             
@@ -200,15 +207,17 @@ class DuplicateRemover:
             keep_file = files[0]
             delete_files = files[1:]
             
-            print(f"  Group (size: {group['size_bytes']} bytes, {len(files)} files):")
+            # Get size if available
+            size_info = f"size: {group['size_bytes']} bytes, " if 'size_bytes' in group else ""
+            print(f"  Group ({size_info}{len(files)} files):")
             print(f"    ✅ Keep: {keep_file['path']}")
             
             for file_info in delete_files:
                 print(f"    🗑️  Delete: {file_info['path']}")
+                deleted.append(file_info['path'])  # Track in both dry_run and actual deletion
                 if not dry_run:
                     try:
                         os.remove(file_info['path'])
-                        deleted.append(file_info['path'])
                     except Exception as e:
                         print(f"       ⚠️  Error deleting: {e}")
         
@@ -230,15 +239,17 @@ class DuplicateRemover:
             keep_file = files[0]
             delete_files = files[1:]
             
-            print(f"  Group (size: {group['size_bytes']} bytes, {len(files)} files):")
+            # Get size if available
+            size_info = f"size: {group['size_bytes']} bytes, " if 'size_bytes' in group else ""
+            print(f"  Group ({size_info}{len(files)} files):")
             print(f"    ✅ Keep: {keep_file['path']}")
             
             for file_info in delete_files:
                 print(f"    🗑️  Delete: {file_info['path']}")
+                deleted.append(file_info['path'])  # Track in both dry_run and actual deletion
                 if not dry_run:
                     try:
                         os.remove(file_info['path'])
-                        deleted.append(file_info['path'])
                     except Exception as e:
                         print(f"       ⚠️  Error deleting: {e}")
         
@@ -258,8 +269,10 @@ class DuplicateRemover:
         for i, group in enumerate(all_groups, 1):
             files = group['files']
             
+            # Get size if available
+            size_info = f"Size: {group['size_bytes']} bytes, " if 'size_bytes' in group else ""
             print(f"\n{'=' * 70}")
-            print(f"Group {i}/{len(all_groups)} - Size: {group['size_bytes']} bytes, {len(files)} files")
+            print(f"Group {i}/{len(all_groups)} - {size_info}{len(files)} files")
             print('=' * 70)
             
             for j, file_info in enumerate(files, 1):
@@ -297,10 +310,10 @@ class DuplicateRemover:
                             print(f"  ✅ Keeping: {file_info['path']}")
                         else:
                             print(f"  🗑️  Deleting: {file_info['path']}")
+                            deleted.append(file_info['path'])  # Track in both dry_run and actual deletion
                             if not dry_run:
                                 try:
                                     os.remove(file_info['path'])
-                                    deleted.append(file_info['path'])
                                 except Exception as e:
                                     print(f"     ⚠️  Error deleting: {e}")
                     
@@ -327,15 +340,17 @@ class DuplicateRemover:
             keep_file = files[0]
             delete_files = files[1:]
             
-            print(f"  Group (size: {group['size_bytes']} bytes, {len(files)} files):")
+            # Get size if available
+            size_info = f"size: {group['size_bytes']} bytes, " if 'size_bytes' in group else ""
+            print(f"  Group ({size_info}{len(files)} files):")
             print(f"    ✅ Keep: {keep_file['path']} ({keep_file['class']}/{keep_file['set']})")
             
             for file_info in delete_files:
                 print(f"    🗑️  Delete: {file_info['path']} ({file_info['class']}/{file_info['set']})")
+                deleted.append(file_info['path'])  # Track in both dry_run and actual deletion
                 if not dry_run:
                     try:
                         os.remove(file_info['path'])
-                        deleted.append(file_info['path'])
                     except Exception as e:
                         print(f"       ⚠️  Error deleting: {e}")
         
@@ -357,6 +372,88 @@ class DuplicateRemover:
             raise ValueError(f"Unknown strategy: {strategy_id}")
         
         return strategies[strategy_id](dry_run=dry_run)
+    
+    def update_report_after_deletion(self, deleted_files):
+        """
+        Update the report to remove deleted files and empty groups.
+        After removing files, re-categorize groups since their category may have changed.
+        
+        Args:
+            deleted_files: List of file paths that were deleted
+        """
+        deleted_set = set(deleted_files)
+        
+        # Collect all remaining groups (regardless of original category)
+        all_remaining_groups = []
+        
+        for category in self.report['duplicate_groups']:
+            for group in self.report['duplicate_groups'][category]:
+                # Remove deleted files from the group
+                remaining_files = [f for f in group['files'] if f['path'] not in deleted_set]
+                
+                # Only keep groups that still have 2+ files (still duplicates)
+                if len(remaining_files) >= 2:
+                    group['files'] = remaining_files
+                    group['count'] = len(remaining_files)
+                    all_remaining_groups.append(group)
+        
+        # Re-categorize all groups (category may have changed after deletion)
+        recategorized = {
+            'same_class_and_set': [],
+            'same_class_diff_set': [],
+            'diff_class_same_set': [],
+            'diff_class_diff_set': [],
+            'unknown': []
+        }
+        
+        for group in all_remaining_groups:
+            files = group['files']
+            
+            # Group files by class and set
+            classes = set(f['class'] for f in files if f['class'])
+            sets = set(f['set'] for f in files if f['set'])
+            
+            # Determine category
+            if len(classes) == 1 and len(sets) == 1:
+                category = 'same_class_and_set'
+            elif len(classes) == 1 and len(sets) > 1:
+                category = 'same_class_diff_set'
+            elif len(classes) > 1 and len(sets) == 1:
+                category = 'diff_class_same_set'
+            elif len(classes) > 1 and len(sets) > 1:
+                category = 'diff_class_diff_set'
+            else:
+                category = 'unknown'
+            
+            recategorized[category].append(group)
+        
+        # Update the report with recategorized groups
+        self.report['duplicate_groups'] = recategorized
+        
+        # Update summary statistics
+        total_files = 0
+        total_groups = 0
+        
+        for category in ['same_class_and_set', 'same_class_diff_set', 'diff_class_same_set', 
+                        'diff_class_diff_set', 'unknown']:
+            groups = self.report['duplicate_groups'][category]
+            total_groups += len(groups)
+            
+            files_count = sum(g['count'] for g in groups)
+            total_files += files_count
+            
+            # Update category summary
+            self.report['summary'][category]['groups'] = len(groups)
+            self.report['summary'][category]['files'] = files_count
+        
+        # Update overall summary
+        self.report['summary']['total_duplicate_files'] = total_files
+        self.report['summary']['total_duplicate_groups'] = total_groups
+    
+    def save_updated_report(self):
+        """Save the updated report back to the original file."""
+        with open(self.report_path, 'w', encoding='utf-8') as f:
+            json.dump(self.report, f, indent=2, ensure_ascii=False)
 
 
 def main():
@@ -368,15 +465,15 @@ def main():
     # Get report path
     script_dir = Path(__file__).parent
     dataset_dir = script_dir.parent / 'dataset'
-    report_path = dataset_dir / 'duplicate_report.json'
+    report_path = dataset_dir / 'duplicate_report_phash.json'
     
     print(f"\n📁 Report path: {report_path}")
     
     # Check if report exists
     if not report_path.exists():
-        print("\n❌ Error: duplicate_report.json not found!")
-        print("   Please run detect_duplicates.py first:")
-        print("   python data_collection/detect_duplicates.py")
+        print("\n❌ Error: duplicate_report_phash.json not found!")
+        print("   Please run detect_duplicates_by_phash.py first:")
+        print("   python data_collection/detect_duplicates_by_phash.py")
         return
     
     # Load report
@@ -468,8 +565,26 @@ def main():
     
     print(f"\n💾 Deletion log saved to: {log_path}")
     
+    # Backup original report
+    backup_path = dataset_dir / 'old_duplicate_report_phash.json'
+    print(f"\n📋 Backing up original report to: {backup_path}")
+    shutil.copy2(report_path, backup_path)
+    print(f"   ✅ Backup created")
+    
+    # Update the report to remove deleted files
+    print(f"\n🔄 Updating report to remove deleted files...")
+    remover.update_report_after_deletion(deleted)
+    remover.save_updated_report()
+    print(f"   ✅ Report updated: {report_path}")
+    
+    # Show updated statistics
+    updated_summary = remover.report['summary']
+    print(f"\n📊 Updated Report Statistics:")
+    print(f"   Remaining duplicate files: {updated_summary['total_duplicate_files']}")
+    print(f"   Remaining duplicate groups: {updated_summary['total_duplicate_groups']}")
+    
     print("\n🔧 Recommended next step:")
-    print("   python data_collection/detect_duplicates.py")
+    print("   python data_collection/detect_duplicates_by_phash.py")
     print("   (Re-run to verify all duplicates are removed)")
     
     print("\n" + "=" * 70)
