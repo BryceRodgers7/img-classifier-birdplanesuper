@@ -68,8 +68,14 @@ class ImageDownloader:
             print(f"  ⚠️  Failed to download {url}: {str(e)[:50]}")
             return False
     
-    def download_from_urls_file(self, urls_file, category):
-        """Download images from a text file containing URLs"""
+    def download_from_urls_file(self, urls_file, category, query_name='manual'):
+        """Download images from a text file containing URLs
+        
+        Args:
+            urls_file: Path to file containing URLs (one per line)
+            category: Category name (bird, plane, superman, other)
+            query_name: Query name for filename (default: 'manual')
+        """
         urls_path = Path(urls_file)
         if not urls_path.exists():
             print(f"❌ File not found: {urls_file}")
@@ -80,11 +86,14 @@ class ImageDownloader:
         
         print(f"\n📥 Downloading {len(urls)} images for '{category}'...")
         
+        # Sanitize query name for filename
+        query_sanitized = query_name.replace(' ', '_').replace('-', '_')
+        query_sanitized = ''.join(c for c in query_sanitized if c.isalnum() or c == '_')
+        
         downloaded = 0
         for i, url in enumerate(urls, 1):
-            # Create filename from hash of URL
-            url_hash = hashlib.md5(url.encode()).hexdigest()[:10]
-            filename = self.output_dir / f"{category}_{i:04d}_{url_hash}.jpg"
+            # Format: class_query_number.jpg
+            filename = self.output_dir / f"{category}_{query_sanitized}_{i:03d}.jpg"
             
             if filename.exists():
                 print(f"  ⏭️  Skipping (exists): {filename.name}")
@@ -145,43 +154,49 @@ def download_category_images(category, queries, method='duckduckgo', api_key=Non
     temp_dir = base_dir / 'temp' / category
     downloader = ImageDownloader(temp_dir)
     
-    # Step 1: Collect URLs from ALL queries (don't stop early!)
+    # Step 1: Collect URLs from ALL queries and download per query
     print(f"\n🔍 Searching for {images_per_query} images per query ({len(queries)} queries)...")
     print(f"   Will split into {train_pct}% for training and {val_pct}% for validation")
-    all_urls = []
     
-    for i, query in enumerate(queries, 1):
-        print(f"\n   Query {i}/{len(queries)}: '{query}'")
+    # Store downloaded files with metadata (query info)
+    downloaded_files_with_metadata = []
+    
+    for query_idx, query in enumerate(queries, 1):
+        print(f"\n   Query {query_idx}/{len(queries)}: '{query}'")
+        
+        # Sanitize query for filename (replace spaces with underscores, remove special chars)
+        query_sanitized = query.replace(' ', '_').replace('-', '_')
+        query_sanitized = ''.join(c for c in query_sanitized if c.isalnum() or c == '_')
+        
         if method == 'duckduckgo':
             urls = downloader.search_duckduckgo(query, images_per_query)
         else:
             print(f"❌ Unknown method: {method}")
             return 0
         
-        all_urls.extend(urls)
-        print(f"   → Collected {len(urls)} URLs (total so far: {len(all_urls)})")
-    
-    print(f"\n📊 Total URLs collected: {len(all_urls)} from {len(queries)} queries")
-    
-    # Step 2: Download ALL images to temporary directory
-    print(f"\n💾 Downloading all {len(all_urls)} images...")
-    downloaded_files = []
-    
-    for i, url in enumerate(all_urls, 1):
-        filename = temp_dir / f"{category}_{i:04d}.jpg"
+        print(f"   → Collected {len(urls)} URLs for query '{query}'")
         
-        if i % 50 == 0:  # Progress update every 50 images
-            print(f"  Progress: {i}/{len(all_urls)} ({100*i/len(all_urls):.1f}%)")
+        # Download images for this query
+        print(f"   💾 Downloading {len(urls)} images for this query...")
+        for img_idx, url in enumerate(urls, 1):
+            # Format: class_query_number.jpg
+            filename = temp_dir / f"{category}_{query_sanitized}_{img_idx:03d}.jpg"
+            
+            if downloader.download_image(url, filename):
+                downloaded_files_with_metadata.append({
+                    'file': filename,
+                    'query': query,
+                    'query_sanitized': query_sanitized
+                })
+            
+            # Rate limiting
+            time.sleep(0.5)
         
-        if downloader.download_image(url, filename):
-            downloaded_files.append(filename)
-        
-        # Rate limiting
-        time.sleep(0.5)
+        print(f"   ✓ Downloaded {len([f for f in downloaded_files_with_metadata if query_sanitized in f['file'].name])} images for '{query}'")
     
-    print(f"\n✅ Successfully downloaded {len(downloaded_files)} / {len(all_urls)} images for {category}")
+    print(f"\n✅ Successfully downloaded {len(downloaded_files_with_metadata)} total images for {category}")
     
-    # Step 3: Sample and split into train and val sets
+    # Step 2: Split into train and val sets
     print(f"\n📊 Splitting into {train_pct}% for training and {val_pct}% for validation")
     
     train_dir = base_dir / 'train' / category
@@ -190,20 +205,23 @@ def download_category_images(category, queries, method='duckduckgo', api_key=Non
     val_dir.mkdir(parents=True, exist_ok=True)
     
     # Randomize order before splitting to avoid ordering bias
-    random.shuffle(downloaded_files)
+    random.shuffle(downloaded_files_with_metadata)
     
     # Split: first train_pct% images to train, rest to val
-    train_files = downloaded_files[:int(len(downloaded_files) * train_pct / 100)]
-    val_files = downloaded_files[int(len(downloaded_files) * train_pct / 100):]
+    split_idx = int(len(downloaded_files_with_metadata) * train_pct / 100)
+    train_files = downloaded_files_with_metadata[:split_idx]
+    val_files = downloaded_files_with_metadata[split_idx:]
     
-    # Move first train_pct% of images to train set
-    for i, src_file in enumerate(train_files, 1):
-        dest_file = train_dir / f"{category}_train_{i:04d}.jpg"
+    # Move images to train set (keeping original names)
+    for file_info in train_files:
+        src_file = file_info['file']
+        dest_file = train_dir / src_file.name  # Keep original name
         shutil.move(str(src_file), str(dest_file))
     
-    # Move remaining images to val set
-    for i, src_file in enumerate(val_files, 1):
-        dest_file = val_dir / f"{category}_val_{i:04d}.jpg"
+    # Move images to val set (keeping original names)
+    for file_info in val_files:
+        src_file = file_info['file']
+        dest_file = val_dir / src_file.name  # Keep original name
         shutil.move(str(src_file), str(dest_file))
     
     # Clean up temp directory
