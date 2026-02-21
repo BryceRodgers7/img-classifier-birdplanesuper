@@ -534,7 +534,7 @@ def main():
                         help='Path to dataset directory')
     parser.add_argument('--epochs', type=int, default=15,
                         help='Number of training epochs')
-    parser.add_argument('--batch-size', type=int, default=32,
+    parser.add_argument('--batch-size', type=int, default=64,
                         help='Batch size for training')
     parser.add_argument('--learning-rate', type=float, default=0.0001,
                         help='Learning rate')
