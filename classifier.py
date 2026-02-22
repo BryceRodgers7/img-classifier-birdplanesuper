@@ -158,6 +158,14 @@ class BirdPlaneSupermanClassifier:
         image_tensor = self.transform(image)
         return image_tensor.unsqueeze(0)  # Add batch dimension
     
+    def _preprocess_pil_image(self, image: Image.Image) -> torch.Tensor:
+        """Preprocess a PIL Image object"""
+        # Ensure RGB format
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        image_tensor = self.transform(image)
+        return image_tensor.unsqueeze(0)  # Add batch dimension
+    
     def predict(self, image_path: str) -> Tuple[str, float, Dict[str, float]]:
         """
         Predict class for a single image.
@@ -195,6 +203,48 @@ class BirdPlaneSupermanClassifier:
             for i in range(len(self.classes))
         }
 
+        return pred_class, confidence, all_probs
+    
+    def predict_from_image(self, image: Image.Image) -> Tuple[str, float, Dict[str, float]]:
+        """
+        Predict class for a PIL Image object (for in-memory processing)
+        
+        Args:
+            image: PIL Image object
+            
+        Returns:
+            pred_class: Predicted class name
+            confidence: Confidence score (0-1) for the predicted class
+            all_probs: Dictionary of {class_name: probability} for all classes
+        """
+        # Preprocess image
+        image_tensor = self._preprocess_pil_image(image).to(self.device)
+        
+        # Forward pass
+        with torch.no_grad():
+            logits = self.model(image_tensor)
+            probabilities = torch.softmax(logits / self.temperature, dim=1)[0]
+        
+        # Get prediction
+        max_prob, pred_idx = torch.max(probabilities, 0)
+        max_prob = max_prob.item()
+        pred_idx = pred_idx.item()
+        
+        # Apply confidence thresholding
+        if max_prob < self.confidence_threshold:
+            # Low confidence → predict 'other'
+            pred_class = 'other'
+            confidence = max_prob  # Keep original confidence for transparency
+        else:
+            pred_class = self.classes[pred_idx]
+            confidence = max_prob
+        
+        # Create probability dictionary
+        all_probs = {
+            self.classes[i]: float(probabilities[i].item())
+            for i in range(len(self.classes))
+        }
+        
         return pred_class, confidence, all_probs
     
     def predict_batch(
