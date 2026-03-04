@@ -123,9 +123,9 @@ def main() -> None:
     print(f"\nFitting temperature with L-BFGS (init T={args.init_temperature}) ...")
     temperature = fit_temperature(logits, labels, init_temperature=args.init_temperature)
 
-    print(f"\n  ╔══════════════════════════════╗")
+    print(f"\n  ╔══════════════════════════════════╗")
     print(f"  ║  Optimal Temperature  T = {temperature:>6.4f} ║")
-    print(f"  ╚══════════════════════════════╝")
+    print(f"  ╚══════════════════════════════════╝")
 
     if temperature > 1.0:
         print(f"  → T > 1: model was overconfident; probabilities softened")
