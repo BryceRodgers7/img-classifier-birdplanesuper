@@ -12,7 +12,7 @@ Trains a ResNet50-based classifier with:
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler, ConcatDataset
 from torchvision import transforms, models
 from PIL import Image
 import numpy as np
@@ -43,8 +43,9 @@ class BirdPlaneSupermanDataset(Dataset):
         for class_name in self.classes:
             class_dir = self.root_dir / split / class_name
             if class_dir.exists():
-                for img_path in class_dir.glob('*.jpg'):
-                    self.samples.append((str(img_path), self.class_to_idx[class_name]))
+                for ext in ('*.jpg', '*.jpeg', '*.png'):
+                    for img_path in class_dir.glob(ext):
+                        self.samples.append((str(img_path), self.class_to_idx[class_name]))
         
         print(f"  Loaded {len(self.samples)} images for {split} set")
         
@@ -137,6 +138,63 @@ class BirdPlaneSupermanDataset(Dataset):
         return image, label, img_path
 
 
+class ChallengeDataset(Dataset):
+    """Dataset for hard-negative challenge images with specialized augmentation.
+
+    Scans <root_dir>/<split>/<class>/challenge/ for each class.
+    Training split uses a dedicated augmentation pipeline; val split uses
+    the standard resize/center-crop/normalize transform.
+    """
+
+    def __init__(self, root_dir, split='train', classes=None, class_to_idx=None):
+        self.root_dir = Path(root_dir)
+        self.split = split
+        self.classes = classes or ['bird', 'plane', 'superman', 'other']
+        self.class_to_idx = class_to_idx or {cls: idx for idx, cls in enumerate(self.classes)}
+
+        self.samples = []
+        for class_name in self.classes:
+            challenge_dir = self.root_dir / split / class_name / 'challenge'
+            if challenge_dir.exists():
+                for ext in ('*.jpg', '*.jpeg', '*.png'):
+                    for img_path in challenge_dir.glob(ext):
+                        self.samples.append((str(img_path), self.class_to_idx[class_name]))
+
+        print(f"  Found {len(self.samples)} challenge images for {split} set")
+
+        normalize = transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225]
+        )
+
+        if split == 'train':
+            self.transform = transforms.Compose([
+                transforms.RandomResizedCrop(224, scale=(0.75, 1.0)),
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.RandomRotation(15),
+                transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.15),
+                transforms.RandomApply([transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.0))], p=0.2),
+                transforms.ToTensor(),
+                normalize
+            ])
+        else:
+            self.transform = transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                normalize
+            ])
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        img_path, label = self.samples[idx]
+        image = Image.open(img_path).convert('RGB')
+        image = self.transform(image)
+        return image, label, img_path
+
+
 def create_model(num_classes=4, freeze_until='layer3'):
     """
     Create ResNet50 model with frozen early layers
@@ -182,9 +240,13 @@ def get_class_weights(dataset):
     num_classes = len(dataset.classes)
     
     # Calculate weights: total / (num_classes * class_count)
+    # Classes absent from this dataset (count=0) get weight 0 — they have no samples anyway
     class_weights = {}
     for class_idx in range(num_classes):
-        class_weights[class_idx] = total_samples / (num_classes * class_counts[class_idx])
+        if class_counts[class_idx] > 0:
+            class_weights[class_idx] = total_samples / (num_classes * class_counts[class_idx])
+        else:
+            class_weights[class_idx] = 0.0
     
     # Create sample weights for each sample
     sample_weights = [class_weights[label] for _, label in dataset.samples]
@@ -555,7 +617,15 @@ def main():
                         help='Number of highest-loss images to report per class (default: 50)')
     parser.add_argument('--stop-after-analysis', action='store_true',
                         help='Stop training after analysis epochs (only analyze, do not train full model)')
-    
+
+    # Hard-negative oversampling arguments
+    parser.add_argument('--hard-negative-oversampling-factor', type=int,
+                        nargs='?', const=75, default=None,
+                        metavar='FACTOR',
+                        help='Oversample challenge/ subfolder images by this factor using ConcatDataset. '
+                             'Omit a value to use the default of 75. '
+                             'Also evaluates the model on val challenge images before and after training.')
+
     args = parser.parse_args()
     
     # Setup
@@ -581,22 +651,78 @@ def main():
         weight = sample_weights[0] if class_idx == 0 else sample_weights[sum(class_counts[i] for i in range(class_idx))]
         print(f"  {class_name:10s}: {count:4d} images (weight: {weight:.4f})")
     
-    # Create weighted sampler for training
-    sampler = WeightedRandomSampler(
-        weights=sample_weights,
-        num_samples=len(train_dataset),
-        replacement=True
-    )
-    
-    # Create data loaders
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        sampler=sampler,
-        num_workers=0,  # Windows compatible
-        pin_memory=True if torch.cuda.is_available() else False
-    )
-    
+    # Hard-negative oversampling: build ConcatDataset from challenge subfolder images
+    challenge_val_loader = None
+    hnos_factor = args.hard_negative_oversampling_factor
+    if hnos_factor is not None:
+        print(f"\nHard-negative oversampling ENABLED (factor={hnos_factor})")
+        challenge_train = ChallengeDataset(
+            dataset_dir, split='train',
+            classes=train_dataset.classes,
+            class_to_idx=train_dataset.class_to_idx
+        )
+        if len(challenge_train) > 0:
+            _, challenge_counts = get_class_weights(challenge_train)
+            repeated_challenge = ConcatDataset([challenge_train] * hnos_factor)
+            effective_train_dataset = ConcatDataset([train_dataset, repeated_challenge])
+            print(f"  Challenge images per class: "
+                  + ", ".join(f"{train_dataset.classes[k]}={v}" for k, v in challenge_counts.items()))
+            print(f"  Combined training set size: {len(effective_train_dataset)} "
+                  f"({len(train_dataset)} base + {len(repeated_challenge)} oversampled challenge)")
+        else:
+            print("  WARNING: No challenge images found under train/<class>/challenge/ — "
+                  "oversampling has no effect.")
+            effective_train_dataset = train_dataset
+            challenge_counts = {}
+
+        print("  Class weights DISABLED (using shuffle sampler with hard-negative oversampling)")
+
+        # Val challenge dataset (no augmentation)
+        challenge_val = ChallengeDataset(
+            dataset_dir, split='val',
+            classes=train_dataset.classes,
+            class_to_idx=train_dataset.class_to_idx
+        )
+        if len(challenge_val) > 0:
+            challenge_val_loader = DataLoader(
+                challenge_val,
+                batch_size=args.batch_size,
+                shuffle=False,
+                num_workers=0,
+                pin_memory=True if torch.cuda.is_available() else False
+            )
+        else:
+            print("  WARNING: No challenge images found under val/<class>/challenge/ — "
+                  "before/after evaluation will be skipped.")
+    else:
+        effective_train_dataset = train_dataset
+        challenge_counts = {}
+
+    # Create sampler / data loaders
+    # When hard-negative oversampling is active the oversampling itself handles balance,
+    # so use a plain shuffle instead of WeightedRandomSampler.
+    if hnos_factor is not None:
+        train_loader = DataLoader(
+            effective_train_dataset,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=0,  # Windows compatible
+            pin_memory=True if torch.cuda.is_available() else False
+        )
+    else:
+        sampler = WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=len(effective_train_dataset),
+            replacement=True
+        )
+        train_loader = DataLoader(
+            effective_train_dataset,
+            batch_size=args.batch_size,
+            sampler=sampler,
+            num_workers=0,  # Windows compatible
+            pin_memory=True if torch.cuda.is_available() else False
+        )
+
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
@@ -605,23 +731,51 @@ def main():
         pin_memory=True if torch.cuda.is_available() else False
     )
     
-    # Create model
-    print("\nCreating model...")
+    # Create model architecture, then load weights from best_model.pth if available
+    existing_model_path = output_dir / 'best_model.pth'
+    if existing_model_path.exists():
+        print(f"\nLoading existing model from {existing_model_path}...")
+    else:
+        print("\nNo existing best_model.pth found — initialising from ImageNet pretrained weights...")
+
     freeze_layer = None if args.freeze_until == 'none' else args.freeze_until
     model = create_model(num_classes=len(train_dataset.classes), freeze_until=freeze_layer)
     model = model.to(device)
-    
+
+    if existing_model_path.exists():
+        checkpoint = torch.load(existing_model_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        print(f"  Loaded checkpoint from epoch {checkpoint.get('epoch', '?')} "
+              f"(best F1={checkpoint.get('best_f1', 0):.4f})")
+
     # Count trainable parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Total parameters: {total_params:,}")
     print(f"  Trainable parameters: {trainable_params:,} ({100*trainable_params/total_params:.1f}%)")
-    
+
     # Loss and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), 
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
                            lr=args.learning_rate)
     
+    # Pre-training challenge set evaluation
+    pre_challenge_metrics = None
+    if challenge_val_loader is not None:
+        print("\n" + "=" * 70)
+        print("CHALLENGE SET EVALUATION — BEFORE TRAINING")
+        print("=" * 70)
+        pre_challenge_metrics, _ = validate(
+            model, challenge_val_loader, criterion, device, train_dataset.classes
+        )
+        print(f"  Accuracy: {pre_challenge_metrics['accuracy']:.4f} | "
+              f"Loss: {pre_challenge_metrics['loss']:.4f} | "
+              f"Overall F1: {pre_challenge_metrics['overall_f1']:.4f}")
+        print("  Per-class F1:", ", ".join(
+            f"{train_dataset.classes[i]}={pre_challenge_metrics['f1'][i]:.4f}"
+            for i in range(len(train_dataset.classes))
+        ))
+
     # Training loop
     print(f"\nStarting training for {args.epochs} epochs...")
     if args.detect_problematic:
@@ -648,7 +802,9 @@ def main():
             'trainable_params': trainable_params,
             'detect_problematic': args.detect_problematic,
             'analysis_epochs': args.analysis_epochs if args.detect_problematic else None,
-            'top_n_problematic': args.top_n_problematic if args.detect_problematic else None
+            'top_n_problematic': args.top_n_problematic if args.detect_problematic else None,
+            'hard_negative_oversampling_factor': hnos_factor,
+            'challenge_counts_train': {train_dataset.classes[k]: v for k, v in challenge_counts.items()} if challenge_counts else None
         }
     }
     
@@ -728,7 +884,7 @@ def main():
         # Save best model
         if val_metrics['overall_f1'] > best_f1:
             best_f1 = val_metrics['overall_f1']
-            best_model_path = output_dir / 'best_model.pth'
+            best_model_path = output_dir / 'new_best_model.pth'
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
@@ -771,6 +927,47 @@ def main():
         # Print summary
         print_problematic_images_summary(report)
     
+    # Post-training challenge set evaluation and before/after comparison
+    if challenge_val_loader is not None:
+        print("\n" + "=" * 70)
+        print("CHALLENGE SET EVALUATION — AFTER TRAINING")
+        print("=" * 70)
+        post_challenge_metrics, _ = validate(
+            model, challenge_val_loader, criterion, device, train_dataset.classes
+        )
+        print(f"  Accuracy: {post_challenge_metrics['accuracy']:.4f} | "
+              f"Loss: {post_challenge_metrics['loss']:.4f} | "
+              f"Overall F1: {post_challenge_metrics['overall_f1']:.4f}")
+        print("  Per-class F1:", ", ".join(
+            f"{train_dataset.classes[i]}={post_challenge_metrics['f1'][i]:.4f}"
+            for i in range(len(train_dataset.classes))
+        ))
+
+        if pre_challenge_metrics is not None:
+            print("\n" + "=" * 70)
+            print("CHALLENGE SET — BEFORE vs AFTER COMPARISON")
+            print("=" * 70)
+            acc_delta = post_challenge_metrics['accuracy'] - pre_challenge_metrics['accuracy']
+            f1_delta = post_challenge_metrics['overall_f1'] - pre_challenge_metrics['overall_f1']
+            loss_delta = post_challenge_metrics['loss'] - pre_challenge_metrics['loss']
+            print(f"  {'Metric':<20} {'Before':>10} {'After':>10} {'Delta':>10}")
+            print(f"  {'-'*52}")
+            print(f"  {'Accuracy':<20} {pre_challenge_metrics['accuracy']:>10.4f} "
+                  f"{post_challenge_metrics['accuracy']:>10.4f} "
+                  f"{acc_delta:>+10.4f}")
+            print(f"  {'Overall F1':<20} {pre_challenge_metrics['overall_f1']:>10.4f} "
+                  f"{post_challenge_metrics['overall_f1']:>10.4f} "
+                  f"{f1_delta:>+10.4f}")
+            print(f"  {'Loss':<20} {pre_challenge_metrics['loss']:>10.4f} "
+                  f"{post_challenge_metrics['loss']:>10.4f} "
+                  f"{loss_delta:>+10.4f}")
+            print(f"\n  Per-class F1 delta:")
+            for i, class_name in enumerate(train_dataset.classes):
+                before_f1 = pre_challenge_metrics['f1'][i]
+                after_f1 = post_challenge_metrics['f1'][i]
+                delta = after_f1 - before_f1
+                print(f"    {class_name:<12} {before_f1:.4f} -> {after_f1:.4f}  ({delta:>+.4f})")
+
     # Save training metadata
     metadata_path = output_dir / 'training_metadata.json'
     with open(metadata_path, 'w') as f:
@@ -781,7 +978,7 @@ def main():
     print("Training complete!")
     print("=" * 70)
     print(f"\nBest validation F1: {best_f1:.4f}")
-    print(f"Model saved to: {output_dir / 'best_model.pth'}")
+    print(f"Model saved to: {output_dir / 'new_best_model.pth'}")
     print(f"Metadata saved to: {metadata_path}")
     print(f"Error analysis saved to: {error_analysis_dir}")
     
