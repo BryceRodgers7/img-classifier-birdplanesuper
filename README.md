@@ -82,7 +82,7 @@ python data_collection/download_images.py --duckduckgo
 ```
 
 This will:
-- Search for ~2000 images across all categories
+- Search for ~100 images per query in each class (total of ~16000 images by default)
 - Download and organize them into train/val splits (80/20)
 - Save to `dataset/train/` and `dataset/val/`
 
@@ -140,8 +140,6 @@ python data_collection/detect_duplicates_by_embedding.py
 # Interactive removal with multiple strategies
 python data_collection/remove_duplicates.py
 ```
-
-Note: You'll need to modify `remove_duplicates.py` to read the specific report file you want to use (e.g., `duplicate_report_phash.json` or `duplicate_report_embedding.json`).
 
 **Available Deletion Strategies:**
 
@@ -392,8 +390,6 @@ python train_classifier.py \
 - Start with the default factor (75) and check the before/after challenge-set F1 comparison
 - If the model still struggles, add more diverse challenge images rather than just increasing the factor
 - Keep challenge images in the val split too — they give you a clean signal of how much harder examples improve
-
-
 
 
 
