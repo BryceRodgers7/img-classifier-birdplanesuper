@@ -317,6 +317,86 @@ python classifier.py models/best_model.pth test_image.jpg
 python classifier.py models/best_model.pth test_images/
 ```
 
+### Step 6: Hard Negative Mining
+
+Hard negative mining lets you curate a set of difficult examples — images the model consistently gets wrong — and force the model to see them far more often during training. This is particularly useful for the `other` class, where visually ambiguous images (e.g., a kite that looks like a bird, a rocket that looks like a plane) tend to cause the most confusion.
+
+#### 1. Curate Your Challenge Images
+
+Place hard-negative images in `challenge/` subfolders inside the existing class directories:
+
+```
+dataset/
+├── train/
+│   ├── bird/
+│   │   └── challenge/      ← hard bird examples
+│   ├── plane/
+│   │   └── challenge/      ← hard plane examples
+│   ├── superman/
+│   │   └── challenge/
+│   └── other/
+│       └── challenge/      ← hard "other" examples (most common use case)
+└── val/
+    ├── bird/
+    │   └── challenge/
+    ├── plane/
+    │   └── challenge/
+    ├── superman/
+    │   └── challenge/
+    └── other/
+        └── challenge/
+```
+
+Good candidates to place in `challenge/` folders:
+- Images the model confidently misclassified (check `models/error_analysis/`)
+- Visually ambiguous images (e.g., kites, hang gliders, model planes)
+- Edge cases that confused the model across multiple training runs
+
+#### 2. Train with Hard-Negative Oversampling
+
+```bash
+# Use the default oversampling factor (75×)
+python train_classifier.py --hard-negative-oversampling-factor
+
+# Specify a custom factor
+python train_classifier.py --hard-negative-oversampling-factor 50
+```
+
+The `--hard-negative-oversampling-factor` argument controls how many times the challenge set is repeated and concatenated onto the base training set. With the default factor of 75, every challenge image appears 75× more often per epoch than a regular training image. Higher values push the model harder on difficult examples; lower values are gentler.
+
+**What happens under the hood:**
+- Challenge images are loaded from all `train/<class>/challenge/` subfolders via `ChallengeDataset`
+- The challenge set is repeated `FACTOR` times and appended to the base training dataset using `ConcatDataset`
+- Class weights / `WeightedRandomSampler` are **disabled** — the oversampling itself provides the balance signal
+- The val challenge set (`val/<class>/challenge/`) is evaluated **before and after** training so you can measure improvement directly on hard examples
+
+**Combine with other options:**
+
+```bash
+python train_classifier.py \
+    --hard-negative-oversampling-factor 75 \
+    --epochs 15 \
+    --learning-rate 0.0001 \
+    --freeze-until layer3
+```
+
+**Hard-Negative Oversampling Parameters:**
+- `--hard-negative-oversampling-factor`: Enable oversampling and set the repetition factor (default when flag is provided with no value: 75; omit the flag entirely to disable)
+
+**Training Output (additional):**
+- Console prints challenge image counts per class and the combined dataset size
+- Before/after accuracy, F1, and loss comparison on the val challenge set is printed at the end of training
+- `hard_negative_oversampling_factor` and per-class challenge image counts are saved in `models/training_metadata.json`
+
+**Tips:**
+- Start with the default factor (75) and check the before/after challenge-set F1 comparison
+- If the model still struggles, add more diverse challenge images rather than just increasing the factor
+- Keep challenge images in the val split too — they give you a clean signal of how much harder examples improve
+
+
+
+
+
 ## Model Architecture
 
 **Base Model:** ResNet50 (pre-trained on ImageNet)
