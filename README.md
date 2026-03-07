@@ -1,17 +1,24 @@
 # Bird/Plane/Superman Image Classifier
 
-A PyTorch-based image classifier that distinguishes between birds, planes, Superman, and other objects using transfer learning with ResNet50.
+A PyTorch-based image classifier that distinguishes between birds, planes, Superman, and other objects using transfer learning with ResNet50. 
 
 ## Features
 
-- **Pre-trained ResNet50** backbone with fine-tuned layers
-- **Weighted sampling** to handle class imbalance
-- **Class-specific augmentations** (e.g., no vertical flips for birds/planes)
-- **Confidence thresholding** for robust predictions
-- **Comprehensive metrics tracking** (precision, recall, F1 per class)
+- **Pre-trained ResNet50** - backbone with fine-tuned layers
+- **Optional CLI-args for training** - control training batch size, # of epochs, LR, layer freezing, and more
+- **Data Collection** - download data using a customizable list of search terms for each class
+- **Deduping suite** - tools to automatically detect and remove duplicated data using a variety of strategies
+- **Mislabeled image detection** - per-image loss tracking to identify mislabeled data
+- **Interactive data hygiene application** - facilitates reviewing and resolving the most problematic images
 - **Error analysis** - saves top-10 misclassified images per class per epoch
-- **Mislabeled image detection** - per-image loss tracking to identify problematic training data
-- **Standalone classifier** module for easy deployment
+- **Weighted sampling** - to handle class imbalance
+- **Class and set-specific augmentations** - (e.g., no vertical flips for birds/planes, extra jitter on challenge set)
+- **Confidence thresholding** - for robust predictions
+- **Comprehensive metrics tracking** - (precision, recall, F1 per class)
+- **Model Checkpointing** - preserve best models from training sessions and further tune existing models
+- **Temperature calibration** – finds and saves the optimal temperature to rescale logits for accurate probability outputs
+- **Challenge set mode** – oversamples a curated challenge set of difficult examples to improve learning on hard negatives
+- **Standalone classifier** - module for easy deployment
 
 ## Project Structure
 
@@ -25,27 +32,27 @@ img_classifier_birdplanesuper/
 │   ├── detect_duplicates_by_phash.py     # Detect near-duplicates (perceptual hash)
 │   ├── detect_duplicates_by_embedding.py # Detect semantic duplicates (model embeddings)
 │   └── remove_duplicates.py              # Remove duplicate images
-├── train_classifier.py                   # Main training script
+├── app.py                                # Streamlit UI to manually test classifier
+├── calibrate_temperature                 # Creates temperature file (optional)
 ├── classifier.py                         # Standalone inference module
 ├── review_problematic_images.py          # Visual review tool for problematic images
+├── temperature_scaling.py                # Temperature calibration library of functions
+├── train_classifier.py                   # Main training script
 ├── requirements.txt                      # Python dependencies
-├── USAGE_EXAMPLES.md                     # Detailed usage examples
+├── INTERACTIVE_REVIEW_GUIDE.md           # Instructions for using visual review tool
 ├── dataset/                              # Training data (created by download_images.py)
 │   ├── train/
 │   │   ├── bird/
 │   │   ├── plane/
 │   │   ├── superman/
 │   │   └── other/
-│   ├── val/
-│   │   ├── bird/
-│   │   ├── plane/
-│   │   ├── superman/
-│   │   └── other/
-│   ├── duplicate_report_filesize.json    # (Optional) Created by detect_duplicates_by_filesize.py
-│   ├── duplicate_report_phash.json       # (Optional) Created by detect_duplicates_by_phash.py
-│   ├── duplicate_report_embedding.json   # (Optional) Created by detect_duplicates_by_embedding.py
-│   ├── problematic_images_report.json    # (Optional) Created by train_classifier.py --detect-problematic
-│   └── deletion_log_*.json               # (Optional) Created by remove_duplicates.py
+│   │       └── challenge
+│   └── val/
+│       ├── bird/
+│       ├── plane/
+│       ├── superman/
+│       └── other/
+│           └── challenge
 └── models/                               # Created during training
     ├── best_model.pth
     ├── training_metadata.json
@@ -234,7 +241,7 @@ Or customize training parameters:
 ```bash
 python train_classifier.py \
     --epochs 15 \
-    --batch-size 32 \
+    --batch-size 64 \
     --learning-rate 0.0001 \
     --confidence-threshold 0.7 \
     --freeze-until layer3
